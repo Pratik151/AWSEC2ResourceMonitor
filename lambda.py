@@ -5,7 +5,7 @@ DEFAULT_THRESHOLD_VALUE = 90.0
 DEFAULT_TEAM_VALUE = 'defaultTeam'
 
 def create_sns_topic(topic_name):
-    client = boto3.client('sns',region_name='us-east-1')
+    client = boto3.client('sns')
     response = client.create_topic(Name=topic_name)
     return response
 
