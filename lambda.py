@@ -84,13 +84,13 @@ def lambda_handler(event, context):
             thresholdValue = DEFAULT_THRESHOLD_VALUE
         if teamValue is None:
             teamValue = DEFAULT_TEAM_VALUE
-        # Create CloudWatch client
         create_cloudwatch_alarm(instance_id, thresholdValue, teamValue)
         print('Processing completed for aws.ec2 and running state')
 
     elif event['source'] == 'aws.ec2' and event['detail']['state'] == 'terminated':
         alarm_name = 'CPU_Monitor_' + event['detail']['instance-id']
-        response = client.delete_alarms(
+        cloudwatch = boto3.client('cloudwatch')
+        response = cloudwatch.delete_alarms(
                 AlarmNames=[
                     alarm_name
                     ]
