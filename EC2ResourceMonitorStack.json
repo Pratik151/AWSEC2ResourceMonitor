@@ -1,5 +1,16 @@
 {
   "AWSTemplateFormatVersion": "2010-09-09",
+  "Parameters": {
+    "DefaultTeamEmailParameter": {
+      "Type": "String",
+      "Description": "Enter subscription email for default SNS topic."
+    },
+    "LambdaRoleName": {
+      "Type": "String",
+      "Default": "metrics_monitor_lambda_role",
+      "Description": "Enter role name to be used for IAM Role which will be created for Lambda."
+    }
+  },
   "Resources": {
     "CloudWatchCreateAlarmIAMRole": {
       "Type": "AWS::IAM::Role",
@@ -31,6 +42,7 @@
                   "Action": [
                     "ec2:Describe*",
                     "cloudwatch:PutMetricAlarm",
+                    "cloudwatch:DeleteAlarms",
                     "logs:CreateLogGroup",
                     "logs:CreateLogStream",
                     "logs:PutLogEvents",
@@ -42,7 +54,19 @@
             }
           }
         ],
-        "RoleName": {"Fn::Join": ["", [{"Ref": "AWS::Region"}, "metrics_monitor_lambda_role"]]}
+        "RoleName": {
+          "Fn::Join": [
+            "",
+            [
+              {
+                "Ref": "AWS::Region"
+              },
+              {
+                "Ref": "LambdaRoleName"
+              }
+            ]
+          ]
+        }
       }
     },
     "defaultSNSTopic": {
@@ -50,7 +74,9 @@
       "Properties": {
         "Subscription": [
           {
-            "Endpoint": "defaultMail@gmail.com",
+            "Endpoint": {
+              "Ref": "DefaultTeamEmailParameter"
+            },
             "Protocol": "email"
           }
         ],
@@ -61,7 +87,7 @@
       "Type": "AWS::Lambda::Function",
       "Properties": {
         "Code": {
-          "ZipFile": "import json\nimport boto3\n\nDEFAULT_THRESHOLD_VALUE = 90.0\nDEFAULT_TEAM_VALUE = 'defaultTeam'\n\ndef create_sns_topic(topic_name):\n    client = boto3.client('sns')\n    response = client.create_topic(Name=topic_name)\n    return response\n\ndef get_ec2_tags(ec2_instanceId):\n    ec2 = boto3.resource('ec2')\n    thresholdValue = None\n    teamValue = None\n    ec2instance = ec2.Instance(ec2_instanceId)\n    all_tags = ec2instance.tags\n    if all_tags is None:\n        return (None, None)\n\n    for tag in all_tags:\n        if tag['Key'] == 'Threshold':\n            thresholdValue = tag['Value']\n        if tag['Key'] == 'Team':\n            teamValue = tag['Value']\n\n    return (thresholdValue, teamValue)\n\ndef create_cloudwatch_alarm(instance_id, thresholdValue, teamValue):\n    sns_create_response = create_sns_topic(teamValue)\n    print(sns_create_response)\n    sns_topic_arn = sns_create_response['TopicArn']\n    cloudwatch = boto3.client('cloudwatch')\n    # Create alarm\n    cloudwatch_response = cloudwatch.put_metric_alarm(\n            AlarmName='CPU_Monitor_' + instance_id,\n            ComparisonOperator='GreaterThanThreshold',\n            EvaluationPeriods=1,\n            MetricName='CPUUtilization',\n            Namespace='AWS/EC2',\n            Period=60,\n            Statistic='Average',\n            Threshold=float(thresholdValue),\n            AlarmActions=[sns_topic_arn],\n            AlarmDescription='Alarm when server CPU exceeds 70%',\n            Dimensions=[\n                {\n                  'Name': 'InstanceId',\n                'Value': instance_id\n                },\n            ]        \n        )\n    print(cloudwatch_response)\n\ndef lambda_handler(event, context):\n    # TODO implement\n    print(event)\n    thresholdValue = DEFAULT_THRESHOLD_VALUE\n    teamValue = DEFAULT_TEAM_VALUE\n    if event['source'] == 'aws.tag':\n        print('Processing event for aws.tag')\n        instance_id = event['resources'][0].split('/')[-1]        \n        changed_tags = event['detail']['changed-tag-keys']\n        for tag in changed_tags:\n            if tag == 'Threshold':\n\n                # If Threshold tag is not in 'tags' dictionary it means tag was deleted \n                # and we update alarm value back to default\n                if 'Threshold' in event['detail']['tags'].keys():\n                    thresholdValue = event['detail']['tags']['Threshold']\n            if tag == 'Team':\n                if 'Team' in event['detail']['tags'].keys():\n                    teamValue = event['detail']['tags']['Team']\n\n            print('Updating alarm for tag change event for instance: ' + instance_id)\n            create_cloudwatch_alarm(instance_id, thresholdValue, teamValue)\n            print('Processing completed for aws.tag event')\n\n    if event['source'] == 'aws.ec2' and event['detail']['state'] == 'running':\n        print('Processing event for aws.ec2 and running state')\n        instance_id = event['detail']['instance-id']\n        thresholdValue, teamValue = get_ec2_tags(instance_id)\n        if thresholdValue is None:\n            thresholdValue = DEFAULT_THRESHOLD_VALUE\n        if teamValue is None:\n            teamValue = DEFAULT_TEAM_VALUE\n        # Create CloudWatch client\n        create_cloudwatch_alarm(instance_id, thresholdValue, teamValue)\n        print('Processing completed for aws.ec2 and running state')\n\n    elif event['source'] == 'aws.ec2' and event['detail']['state'] == 'terminated':\n        alarm_name = 'CPU_Monitor_' + event['detail']['instance-id']\n        response = client.delete_alarms(\n                AlarmNames=[\n                    alarm_name\n                    ]\n                )\n        print(response)\n    return {\n        'statusCode': 200,\n        'body': json.dumps('Success')\n    }\n"
+          "ZipFile": "import json\nimport boto3\n\nDEFAULT_THRESHOLD_VALUE = 90.0\nDEFAULT_TEAM_VALUE = 'defaultTeam'\n\ndef create_sns_topic(topic_name):\n    client = boto3.client('sns')\n    response = client.create_topic(Name=topic_name)\n    return response\n\ndef get_ec2_tags(ec2_instanceId):\n    ec2 = boto3.resource('ec2')\n    thresholdValue = None\n    teamValue = None\n    ec2instance = ec2.Instance(ec2_instanceId)\n    all_tags = ec2instance.tags\n    if all_tags is None:\n        return (None, None)\n\n    for tag in all_tags:\n        if tag['Key'] == 'Threshold':\n            thresholdValue = tag['Value']\n        if tag['Key'] == 'Team':\n            teamValue = tag['Value']\n\n    return (thresholdValue, teamValue)\n\ndef create_cloudwatch_alarm(instance_id, thresholdValue, teamValue):\n    sns_create_response = create_sns_topic(teamValue)\n    print(sns_create_response)\n    sns_topic_arn = sns_create_response['TopicArn']\n    cloudwatch = boto3.client('cloudwatch')\n    # Create alarm\n    cloudwatch_response = cloudwatch.put_metric_alarm(\n            AlarmName='CPU_Monitor_' + instance_id,\n            ComparisonOperator='GreaterThanThreshold',\n            EvaluationPeriods=1,\n            MetricName='CPUUtilization',\n            Namespace='AWS/EC2',\n            Period=60,\n            Statistic='Average',\n            Threshold=float(thresholdValue),\n            AlarmActions=[sns_topic_arn],\n            AlarmDescription='Alarm when server CPU exceeds 70%',\n            Dimensions=[\n                {\n                  'Name': 'InstanceId',\n                'Value': instance_id\n                },\n            ]        \n        )\n    print(cloudwatch_response)\n\ndef lambda_handler(event, context):\n    # TODO implement\n    print(event)\n    thresholdValue = DEFAULT_THRESHOLD_VALUE\n    teamValue = DEFAULT_TEAM_VALUE\n    if event['source'] == 'aws.tag':\n        print('Processing event for aws.tag')\n        instance_id = event['resources'][0].split('/')[-1]        \n        changed_tags = event['detail']['changed-tag-keys']\n        for tag in changed_tags:\n            if tag == 'Threshold':\n\n                # If Threshold tag is not in 'tags' dictionary it means tag was deleted \n                # and we update alarm value back to default\n                if 'Threshold' in event['detail']['tags'].keys():\n                    thresholdValue = event['detail']['tags']['Threshold']\n            if tag == 'Team':\n                if 'Team' in event['detail']['tags'].keys():\n                    teamValue = event['detail']['tags']['Team']\n\n            print('Updating alarm for tag change event for instance: ' + instance_id)\n            create_cloudwatch_alarm(instance_id, thresholdValue, teamValue)\n            print('Processing completed for aws.tag event')\n\n    if event['source'] == 'aws.ec2' and event['detail']['state'] == 'running':\n        print('Processing event for aws.ec2 and running state')\n        instance_id = event['detail']['instance-id']\n        thresholdValue, teamValue = get_ec2_tags(instance_id)\n        if thresholdValue is None:\n            thresholdValue = DEFAULT_THRESHOLD_VALUE\n        if teamValue is None:\n            teamValue = DEFAULT_TEAM_VALUE\n        create_cloudwatch_alarm(instance_id, thresholdValue, teamValue)\n        print('Processing completed for aws.ec2 and running state')\n\n    elif event['source'] == 'aws.ec2' and event['detail']['state'] == 'terminated':\n        alarm_name = 'CPU_Monitor_' + event['detail']['instance-id']\n        cloudwatch = boto3.client('cloudwatch')\n        response = cloudwatch.delete_alarms(\n                AlarmNames=[\n                    alarm_name\n                    ]\n                )\n        print(response)\n    return {\n        'statusCode': 200,\n        'body': json.dumps('Success')\n    }\n"
         },
         "Handler": "index.lambda_handler",
         "FunctionName": "Ec2LambdaFunctionTrigger",
