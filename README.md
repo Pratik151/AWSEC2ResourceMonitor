@@ -52,7 +52,7 @@ Cloudformation template creates below resource:
 
 1. Whenever a new EC2 instance is created or tag is modified, AWS Event rules triggers lambda function.
 
-2. Lambda function checks the type of event (EC2 state change or tag change) and based on that uses logic to create/modify/delete cloudwatch alarm.
+2. Lambda function checks the type of event (EC2 state change or tag change) and based on that uses logic to create/modify/delete cloudwatch alarm. (file: lambda.py)
 
    -> If the instance state is running, it gets the EC2 tags and create cloud watch alarm based on that. (Default values are used if tag is not defined).
    -> If the instance state changes to delete, cloud watch alarm is deleted.
