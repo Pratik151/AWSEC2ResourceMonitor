@@ -59,6 +59,7 @@ Cloudformation template creates below resource:
    -> If there is change in tag, checks are done to find the modified value. If tag is deleted the alarm values will be set back to default values.
    Alarm name used: CPU_Monitor_ + insstance_id
    
-   For multiple region support, AWS Stackset is used. https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/what-is-cfnstacksets.html
+   For multiple region support, AWS Stackset will be used to create Stacks. https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/what-is-cfnstacksets.html
    
+   I have validating by creating stack from Console UI. Equivalent CLI command: 
    ```aws cloudformation create-stack-set --stack-set-name EC2ResourceMonitorStackset --template-body file://EC2ResourceMonitorStack.json --description "Cloudformation stack for EC2 resource monitor stack" --regions '["us-east-1", "us-west-2"] --parameters  ParameterKey=DefaultTeamEmailParameter,ParameterValue=defaaultteam@gmail.com --permission-model SELF_MANAGED -administration-role-arn <AWSCloudFormationStackSetAdministrationRole role ARN> --execution-role-name AWSCloudFormationStackSetExecutionRole --accounts ["<account id1>","<account-id2>"]```
