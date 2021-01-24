@@ -1,1 +1,1 @@
-# AWSEC2ResourceMonitor
+# AWSEC2ResourceMonitorStack
