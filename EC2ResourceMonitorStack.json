@@ -12,6 +12,144 @@
     }
   },
   "Resources": {
+    "CloudTrailIAMRole": {
+      "Type": "AWS::IAM::Role",
+      "Properties": {
+        "AssumeRolePolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Effect": "Allow",
+              "Principal": {
+                "Service": [
+                  "cloudtrail.amazonaws.com"
+                ]
+              },
+              "Action": [
+                "sts:AssumeRole"
+              ]
+            }
+          ]
+        },
+        "Policies": [
+          {
+            "PolicyName": "DefaultPolicy",
+            "PolicyDocument": {
+              "Version": "2012-10-17",
+              "Statement": [
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "logs:PutLogEvents",
+                    "logs:CreateLogStream"
+                  ],
+                  "Resource": "*"
+                }
+              ]
+            }
+          }
+        ],
+        "RoleName": "EC2CloudTrailIAMRole"
+      }
+    },
+    "S3Bucket": {
+      "DeletionPolicy": "Retain",
+      "Type": "AWS::S3::Bucket",
+      "Properties": {}
+    },
+    "BucketPolicy": {
+      "Type": "AWS::S3::BucketPolicy",
+      "Properties": {
+        "Bucket": {
+          "Ref": "S3Bucket"
+        },
+        "PolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Sid": "AWSCloudTrailAclCheck",
+              "Effect": "Allow",
+              "Principal": {
+                "Service": "cloudtrail.amazonaws.com"
+              },
+              "Action": "s3:GetBucketAcl",
+              "Resource": {
+                "Fn::Join": [
+                  "",
+                  [
+                    "arn:aws:s3:::",
+                    {
+                      "Ref": "S3Bucket"
+                    }
+                  ]
+                ]
+              }
+            },
+            {
+              "Sid": "AWSCloudTrailWrite",
+              "Effect": "Allow",
+              "Principal": {
+                "Service": "cloudtrail.amazonaws.com"
+              },
+              "Action": "s3:PutObject",
+              "Resource": {
+                "Fn::Join": [
+                  "",
+                  [
+                    "arn:aws:s3:::",
+                    {
+                      "Ref": "S3Bucket"
+                    },
+                    "/AWSLogs/",
+                    {
+                      "Ref": "AWS::AccountId"
+                    },
+                    "/*"
+                  ]
+                ]
+              },
+              "Condition": {
+                "StringEquals": {
+                  "s3:x-amz-acl": "bucket-owner-full-control"
+                }
+              }
+            }
+          ]
+        }
+      }
+    },
+    "CloudLogGroup": {
+      "DependsOn": [
+        "BucketPolicy"
+      ],
+      "Type": "AWS::Logs::LogGroup",
+      "Properties": {
+        "LogGroupName": "CloudTrailLogsGroup"
+      }
+    },
+    "CloudTrailForEC2Events": {
+      "Type": "AWS::CloudTrail::Trail",
+      "Properties": {
+        "CloudWatchLogsLogGroupArn": {
+          "Fn::GetAtt": [
+            "CloudLogGroup",
+            "Arn"
+          ]
+        },
+        "CloudWatchLogsRoleArn": {
+          "Fn::GetAtt": [
+            "CloudTrailIAMRole",
+            "Arn"
+          ]
+        },
+        "IsLogging": "true",
+        "IsMultiRegionTrail": "true",
+        "S3BucketName": {
+          "Ref": "S3Bucket"
+        },
+        "IncludeGlobalServiceEvents": "true"
+      }
+    },
     "CloudWatchCreateAlarmIAMRole": {
       "Type": "AWS::IAM::Role",
       "Properties": {
@@ -46,7 +184,8 @@
                     "logs:CreateLogGroup",
                     "logs:CreateLogStream",
                     "logs:PutLogEvents",
-                    "sns:CreateTopic"
+                    "sns:CreateTopic",
+                    "lambda:InvokeFunction"
                   ],
                   "Resource": "*"
                 }
@@ -87,7 +226,7 @@
       "Type": "AWS::Lambda::Function",
       "Properties": {
         "Code": {
-          "ZipFile": "import json\nimport boto3\n\nDEFAULT_THRESHOLD_VALUE = 90.0\nDEFAULT_TEAM_VALUE = 'defaultTeam'\n\ndef create_sns_topic(topic_name):\n    client = boto3.client('sns')\n    response = client.create_topic(Name=topic_name)\n    return response\n\ndef get_ec2_tags(ec2_instanceId):\n    ec2 = boto3.resource('ec2')\n    thresholdValue = None\n    teamValue = None\n    ec2instance = ec2.Instance(ec2_instanceId)\n    all_tags = ec2instance.tags\n    if all_tags is None:\n        return (None, None)\n\n    for tag in all_tags:\n        if tag['Key'] == 'Threshold':\n            thresholdValue = tag['Value']\n        if tag['Key'] == 'Team':\n            teamValue = tag['Value']\n\n    return (thresholdValue, teamValue)\n\ndef create_cloudwatch_alarm(instance_id, thresholdValue, teamValue):\n    sns_create_response = create_sns_topic(teamValue)\n    print(sns_create_response)\n    sns_topic_arn = sns_create_response['TopicArn']\n    cloudwatch = boto3.client('cloudwatch')\n    # Create alarm\n    cloudwatch_response = cloudwatch.put_metric_alarm(\n            AlarmName='CPU_Monitor_' + instance_id,\n            ComparisonOperator='GreaterThanThreshold',\n            EvaluationPeriods=1,\n            MetricName='CPUUtilization',\n            Namespace='AWS/EC2',\n            Period=60,\n            Statistic='Average',\n            Threshold=float(thresholdValue),\n            AlarmActions=[sns_topic_arn],\n            AlarmDescription='Alarm when server CPU exceeds 70%',\n            Dimensions=[\n                {\n                  'Name': 'InstanceId',\n                'Value': instance_id\n                },\n            ]        \n        )\n    print(cloudwatch_response)\n\ndef lambda_handler(event, context):\n    # TODO implement\n    print(event)\n    thresholdValue = DEFAULT_THRESHOLD_VALUE\n    teamValue = DEFAULT_TEAM_VALUE\n    if event['source'] == 'aws.tag':\n        print('Processing event for aws.tag')\n        instance_id = event['resources'][0].split('/')[-1]        \n        changed_tags = event['detail']['changed-tag-keys']\n        for tag in changed_tags:\n            if tag == 'Threshold':\n\n                # If Threshold tag is not in 'tags' dictionary it means tag was deleted \n                # and we update alarm value back to default\n                if 'Threshold' in event['detail']['tags'].keys():\n                    thresholdValue = event['detail']['tags']['Threshold']\n            if tag == 'Team':\n                if 'Team' in event['detail']['tags'].keys():\n                    teamValue = event['detail']['tags']['Team']\n\n            print('Updating alarm for tag change event for instance: ' + instance_id)\n            create_cloudwatch_alarm(instance_id, thresholdValue, teamValue)\n            print('Processing completed for aws.tag event')\n\n    if event['source'] == 'aws.ec2' and event['detail']['state'] == 'running':\n        print('Processing event for aws.ec2 and running state')\n        instance_id = event['detail']['instance-id']\n        thresholdValue, teamValue = get_ec2_tags(instance_id)\n        if thresholdValue is None:\n            thresholdValue = DEFAULT_THRESHOLD_VALUE\n        if teamValue is None:\n            teamValue = DEFAULT_TEAM_VALUE\n        create_cloudwatch_alarm(instance_id, thresholdValue, teamValue)\n        print('Processing completed for aws.ec2 and running state')\n\n    elif event['source'] == 'aws.ec2' and event['detail']['state'] == 'terminated':\n        alarm_name = 'CPU_Monitor_' + event['detail']['instance-id']\n        cloudwatch = boto3.client('cloudwatch')\n        response = cloudwatch.delete_alarms(\n                AlarmNames=[\n                    alarm_name\n                    ]\n                )\n        print(response)\n    return {\n        'statusCode': 200,\n        'body': json.dumps('Success')\n    }\n"
+          "ZipFile": "import boto3\nimport base64\nimport gzip\nimport json\nimport base64\n\nDEFAULT_THRESHOLD_VALUE = 90.0\nDEFAULT_TEAM_VALUE = 'defaultTeam'\n\ndef create_sns_topic(topic_name, region):\n    client = boto3.client('sns', region_name=region)\n    response = client.create_topic(Name=topic_name)\n    return response\n\ndef get_ec2_tags(ec2_instanceId, region):\n    ec2 = boto3.resource('ec2', region_name=region)\n    thresholdValue = None\n    teamValue = None\n    ec2instance = ec2.Instance(ec2_instanceId)\n    print(ec2_instanceId)\n    print(ec2instance)\n    all_tags = ec2instance.tags\n    if all_tags is None:\n        return (None, None)\n\n    for tag in all_tags:\n        if tag['Key'] == 'Threshold':\n            thresholdValue = tag['Value']\n        if tag['Key'] == 'Team':\n            teamValue = tag['Value']\n\n    return (thresholdValue, teamValue)\n\ndef create_cloudwatch_alarm(instance_id, thresholdValue, teamValue, region):\n    sns_create_response = create_sns_topic(teamValue, region)\n    print(sns_create_response)\n    sns_topic_arn = sns_create_response['TopicArn']\n    cloudwatch = boto3.client('cloudwatch', region_name=region)\n    # Create alarm\n    cloudwatch_response = cloudwatch.put_metric_alarm(\n            AlarmName='CPU_Monitor_' + instance_id,\n            ComparisonOperator='GreaterThanThreshold',\n            EvaluationPeriods=1,\n            MetricName='CPUUtilization',\n            Namespace='AWS/EC2',\n            Period=60,\n            Statistic='Average',\n            Threshold=float(thresholdValue),\n            AlarmActions=[sns_topic_arn],\n            AlarmDescription='Alarm when server CPU exceeds 70%',\n            Dimensions=[\n                {\n                  'Name': 'InstanceId',\n                'Value': instance_id\n                },\n            ]        \n        )\n    print(cloudwatch_response)\n\ndef lambda_handler(event, context):\n    # TODO implement\n    print(event)\n    thresholdValue = DEFAULT_THRESHOLD_VALUE\n    teamValue = DEFAULT_TEAM_VALUE\n    cw_data = event['awslogs']['data']\n    #print(f'data: {cw_data}')\n    #print(f'type: {type(cw_data)}')\n    compressed_payload = base64.b64decode(cw_data)\n    uncompressed_payload = gzip.decompress(compressed_payload)\n    payload = json.loads(uncompressed_payload)\n    logEvents = payload['logEvents']\n    #print(logEvents)\n    for event in logEvents:\n        message = event['message']\n        #print(event)\n        message = json.loads(message)\n        print(message['eventName'])\n        if message['eventName'] == 'RunInstances':\n            region = message['awsRegion']\n            instance_id = message['responseElements']['instancesSet']['items'][0]['instanceId']\n            thresholdValue, teamValue = get_ec2_tags(instance_id, region)\n            if thresholdValue is None:\n                thresholdValue = DEFAULT_THRESHOLD_VALUE\n            if teamValue is None:\n                teamValue = DEFAULT_TEAM_VALUE\n            create_cloudwatch_alarm(instance_id, thresholdValue, teamValue, region)\n\n        elif message['eventName'] == 'TerminateInstances':\n            region = message['awsRegion']\n            instance_id = message['responseElements']['instancesSet']['items'][0]['instanceId']\n            cloudwatch = boto3.client('cloudwatch', region_name=region)\n            alarm_name = 'CPU_Monitor_' + instance_id\n            response = cloudwatch.delete_alarms(\n                AlarmNames=[\n                    alarm_name\n                    ]\n                )\n            print(response)\n    return {\n        'statusCode': 200,\n        'body': json.dumps('Success')\n    }\n"
         },
         "Handler": "index.lambda_handler",
         "FunctionName": "Ec2LambdaFunctionTrigger",
@@ -101,87 +240,22 @@
         "Timeout": 300
       }
     },
-    "EC2InstanceEventRule": {
-      "Type": "AWS::Events::Rule",
+    "CloudWatchLogGroupSubscriptionToLambda": {
+      "Type": "AWS::Logs::SubscriptionFilter",
       "Properties": {
-        "Name": "EC2InstanceChangeStateRule",
-        "Description": "Rule to trigger event for instance change to Lambda",
-        "EventPattern": {
-          "source": [
-            "aws.ec2"
-          ],
-          "detail-type": [
-            "EC2 Instance State-change Notification"
-          ],
-          "detail": {
-            "state": [
-              "running",
-              "terminated",
-              "stopping"
-            ]
-          }
-        },
-        "State": "ENABLED",
-        "Targets": [
-          {
-            "Arn": {
-              "Fn::GetAtt": [
-                "CreateLambdaFunction",
-                "Arn"
-              ]
-            },
-            "Id": "Ec2LambdaFunctionTriggerId"
-          }
-        ]
-      }
-    },
-    "EC2TagChangeRule": {
-      "Type": "AWS::Events::Rule",
-      "Properties": {
-        "Name": "EC2TagChangeRule",
-        "Description": "Rule to tirgger lambda function for EC2 instance tag changes.",
-        "EventPattern": {
-          "source": [
-            "aws.tag"
-          ],
-          "detail-type": [
-            "Tag Change on Resource"
-          ]
-        },
-        "State": "ENABLED",
-        "Targets": [
-          {
-            "Arn": {
-              "Fn::GetAtt": [
-                "CreateLambdaFunction",
-                "Arn"
-              ]
-            },
-            "Id": "Ec2LambdaFunctionTriggerId"
-          }
-        ]
-      }
-    },
-    "PermissionForEC2InstanceChangeEventsToInvokeLambda": {
-      "Type": "AWS::Lambda::Permission",
-      "Properties": {
-        "FunctionName": {
+        "DestinationArn": {
           "Fn::GetAtt": [
             "CreateLambdaFunction",
             "Arn"
           ]
         },
-        "Action": "lambda:InvokeFunction",
-        "Principal": "events.amazonaws.com",
-        "SourceArn": {
-          "Fn::GetAtt": [
-            "EC2InstanceEventRule",
-            "Arn"
-          ]
+        "FilterPattern": "{ $.eventName = \"RunInstances\" || $.eventName = \"TerminateInstances\" }",
+        "LogGroupName": {
+          "Ref": "CloudLogGroup"
         }
       }
     },
-    "PermissionForEC2TagChangeEventsToInvokeLambda": {
+    "PermissionForCloudWatchLogs": {
       "Type": "AWS::Lambda::Permission",
       "Properties": {
         "FunctionName": {
@@ -191,10 +265,21 @@
           ]
         },
         "Action": "lambda:InvokeFunction",
-        "Principal": "events.amazonaws.com",
+        "Principal": {
+          "Fn::Join": [
+            "",
+            [
+              "logs.",
+              {
+                "Ref": "AWS::Region"
+              },
+              ".amazonaws.com"
+            ]
+          ]
+        },
         "SourceArn": {
           "Fn::GetAtt": [
-            "EC2TagChangeRule",
+            "CloudLogGroup",
             "Arn"
           ]
         }
