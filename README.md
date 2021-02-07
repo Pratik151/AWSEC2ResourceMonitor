@@ -6,10 +6,16 @@ For centralized lambda control used AWS Cloud trail multi region events.
 # AWS Services used:
 
  ~~1. AWS Events Rule (For triggering events based on EC2 instance state change or tag change. )~~
+
+   1. AWS multi region Cloud trail event with cloudwatch logs group for tracking events across all regions in account.
+   
    2. AWS Lambda (As target to ~~Event rules~~ cloudwatch logs group with filter and to create/modify cloudwatch alarms.)
+   
    3. AWS Cloudwatch (For monitoring EC2 instance metric and alert to target based on threshold)
+   
    4. AWS SNS (As target to Cloudwatch alarm for notifying subscribers about alert) 
- ~~5. AWS StackSets (For creating the resource from cloudformation in multiple region or account as required.) ~~
+   
+ ~~5. AWS StackSets (For creating the resource from cloudformation in multiple region or account as required.)~~
 
 
 # Prerequisite:
@@ -51,7 +57,7 @@ Cloudformation template creates below resource:
 5. AWS::SNS::Topic (logical id: defaultSNSTopic)
    Default SNS topic used when Team tag is not defined.
 
-# Flow:
+# Version 1 Flow:
 
 1. Whenever a new EC2 instance is created or tag is modified, AWS Event rules triggers lambda function.
 
@@ -66,4 +72,19 @@ Cloudformation template creates below resource:
    
    I have validated by uploading template to AWS Stackset service from Console UI. Equivalent CLI command: 
    
-   ```aws cloudformation create-stack-set --stack-set-name EC2ResourceMonitorStackset --template-body file://EC2ResourceMonitorStack.json --description "Cloudformation stack for EC2 resource monitor stack" --regions '["us-east-1", "us-west-2"] --parameters  ParameterKey=DefaultTeamEmailParameter,ParameterValue=defaaultteam@gmail.com --permission-model SELF_MANAGED -administration-role-arn <AWSCloudFormationStackSetAdministrationRole role ARN> --execution-role-name AWSCloudFormationStackSetExecutionRole --accounts ["<account id1>","<account-id2>"]```
+   ```aws cloudformation create-stack-set --stack-set-name EC2ResourceMonitorStackset --template-body file://EC2ResourceMonitorStack.json --description "Cloudformation stack for EC2 resource monitor stack" --regions '["us-east-1", "us-west-2"] --parameters  ParameterKey=DefaultTeamEmailParameter,ParameterValue=defaaultteam@gmail.com --permission-model SELF_MANAGED -administration-role-arn <AWSCloudFormationStackSetAdministrationRole role ARN> --execution-role-name AWSCloudFormationStackSetExecutionRole --accounts ["<account id1>","<account-id2>"]``
+   
+   
+# Version 2 Flow:
+1. Whenever a EC2 instance is created or terminated, AWS Cloud trail event is logged in cloudwatch log group.
+2. To the log group lambda function is added as subscription with "RunInstances" and "TerminateInstances" events.
+3. Whenever filtered event is performed, lambda function is invoked.
+4. Lambda function checks the type of event (EC2 Instance Create/Delete) and based on that uses logic to create/delete cloudwatch alarm. (file: lambda.py)
+
+   -> If the event is RunInstances, it gets the EC2 tags and create cloud watch alarm based on tag values in the region where EC2 is created. (Default values are used if tag is not defined).
+   -> If the event is TerminateInstances, cloud watch alarm is deleted.
+   -> If there is change in tag, checks are done to find the modified value. If tag is deleted the alarm values will be set back to default values.
+   Alarm name used: CPU_Monitor_ + insstance_id (Note: This is not applied in version 2 but similar to v1 same can be done by filtering for the required EC2 change events)
+   
+   For multiple region support, AWS Stackset will be used to create Stacks. https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/what-is-cfnstacksets.html
+
