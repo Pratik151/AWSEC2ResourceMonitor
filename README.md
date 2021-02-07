@@ -1,12 +1,16 @@
 # AWSEC2ResourceMonitorStack
 
+# Version 2 Changes:
+For centralized lambda control used AWS Cloud trail multi region events. 
+
 # AWS Services used:
 
-1. AWS Events Rule (For triggering events based on EC2 instance state change or tag change. )
-2. AWS Lambda (As target to Event rules and to create/modify cloudwatch alarms.)
+~~1. AWS Events Rule (For triggering events based on EC2 instance state change or tag change. ) ~~
+
+2. AWS Lambda (As target to ~~Event rules~~ cloudwatch logs group with filter and to create/modify cloudwatch alarms.)
 3. AWS Cloudwatch (For monitoring EC2 instance metric and alert to target based on threshold)
 4. AWS SNS (As target to Cloudwatch alarm for notifying subscribers about alert) 
-5. AWS StackSets (For creating the resource from cloudformation in multiple region or account as required.)
+~~5. AWS StackSets (For creating the resource from cloudformation in multiple region or account as required.) ~~
 
 
 # Prerequisite:
